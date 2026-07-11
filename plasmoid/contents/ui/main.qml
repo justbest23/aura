@@ -31,6 +31,17 @@ PlasmoidItem {
     property var diskWriteKbps: 0
     property var procCount: 0
 
+    // Rolling ~60s history for the sparkline charts, one sample/sec (decoupled
+    // from the 200ms poll rate - that's plenty fine-grained for a minute-wide
+    // trend line and keeps the arrays small).
+    readonly property int historyLength: 60
+    property var cpuHistory: []
+    property var ramHistory: []
+    property var gpuHistory: []
+    property var procHistory: []
+    property var netHistory: []
+    property var diskHistory: []
+
     readonly property bool gpuPresent: root.gpuPct !== null && root.gpuPct !== undefined
 
     // CPU is the core: color from CPU heat, pulse speed from clock boost.
@@ -98,23 +109,48 @@ PlasmoidItem {
         return kbps.toFixed(0) + " KB/s"
     }
 
+    // Raw samples land 5x/sec and are individually noisy (e.g. a 200ms CPU%
+    // window), which reads as flicker in text and jagged charts. Smoothing
+    // here means the same values feed the orb's color/pulse math too, so
+    // everything calms down together rather than needing two parallel
+    // "raw" vs. "display" copies of every metric.
+    readonly property real smoothingAlpha: 0.25
+
+    function ema(prevVal, newVal) {
+        if (newVal === null || newVal === undefined) {
+            return null
+        }
+        if (prevVal === null || prevVal === undefined) {
+            return newVal
+        }
+        return prevVal + (newVal - prevVal) * root.smoothingAlpha
+    }
+
     function applyStats(s) {
-        root.cpuPct = s.cpu_pct
-        root.cpuTemp = s.cpu_temp
-        root.cpuFreqCur = s.cpu_freq_cur
+        root.cpuPct = root.ema(root.cpuPct, s.cpu_pct)
+        root.cpuTemp = root.ema(root.cpuTemp, s.cpu_temp)
+        root.cpuFreqCur = root.ema(root.cpuFreqCur, s.cpu_freq_cur)
         root.cpuFreqMin = s.cpu_freq_min
         root.cpuFreqMax = s.cpu_freq_max
-        root.ramPct = s.ram_pct
+        root.ramPct = root.ema(root.ramPct, s.ram_pct)
         root.ramUsedGb = s.ram_used_gb
         root.ramTotalGb = s.ram_total_gb
-        root.gpuPct = s.gpu_pct
-        root.gpuTemp = s.gpu_temp
-        root.gpuMemPct = s.gpu_mem_pct
-        root.netRxKbps = s.net_rx_kbps
-        root.netTxKbps = s.net_tx_kbps
-        root.diskReadKbps = s.disk_read_kbps
-        root.diskWriteKbps = s.disk_write_kbps
+        root.gpuPct = root.ema(root.gpuPct, s.gpu_pct)
+        root.gpuTemp = root.ema(root.gpuTemp, s.gpu_temp)
+        root.gpuMemPct = root.ema(root.gpuMemPct, s.gpu_mem_pct)
+        root.netRxKbps = root.ema(root.netRxKbps, s.net_rx_kbps)
+        root.netTxKbps = root.ema(root.netTxKbps, s.net_tx_kbps)
+        root.diskReadKbps = root.ema(root.diskReadKbps, s.disk_read_kbps)
+        root.diskWriteKbps = root.ema(root.diskWriteKbps, s.disk_write_kbps)
         root.procCount = s.proc_count
+    }
+
+    function pushHistory(arr, val) {
+        var next = arr.concat([val])
+        if (next.length > root.historyLength) {
+            next = next.slice(next.length - root.historyLength)
+        }
+        return next
     }
 
     Plasmoid.icon: "utilities-system-monitor"
@@ -149,6 +185,22 @@ PlasmoidItem {
         repeat: true
         triggeredOnStart: true
         onTriggered: dataSource.exec(root.pulseScript)
+    }
+
+    Timer {
+        interval: 1000
+        running: true
+        repeat: true
+        onTriggered: {
+            root.cpuHistory = root.pushHistory(root.cpuHistory, root.cpuPct)
+            root.ramHistory = root.pushHistory(root.ramHistory, root.ramPct)
+            if (root.gpuPresent) {
+                root.gpuHistory = root.pushHistory(root.gpuHistory, root.gpuPct)
+            }
+            root.procHistory = root.pushHistory(root.procHistory, root.procCount)
+            root.netHistory = root.pushHistory(root.netHistory, root.netRxKbps + root.netTxKbps)
+            root.diskHistory = root.pushHistory(root.diskHistory, root.diskReadKbps + root.diskWriteKbps)
+        }
     }
 
     compactRepresentation: Item {
@@ -186,56 +238,62 @@ PlasmoidItem {
             fadeDurationMs: Plasmoid.configuration.fadeDurationMs
         }
 
-        GridLayout {
+        ColumnLayout {
             Layout.fillWidth: true
             visible: Plasmoid.configuration.showStats
-            columns: 2
-            columnSpacing: Kirigami.Units.largeSpacing
-            rowSpacing: Kirigami.Units.smallSpacing
+            spacing: Kirigami.Units.smallSpacing
 
-            QQC2.Label { text: i18n("CPU"); opacity: 0.7 }
-            QQC2.Label {
-                text: root.cpuPct.toFixed(0) + "%"
+            StatRow {
+                label: i18n("CPU")
+                displayMode: Plasmoid.configuration.statsDisplay
+                history: root.cpuHistory
+                chartColor: Qt.hsva(root.cpuHue, 0.8, 1.0, 1.0)
+                value: root.cpuPct.toFixed(0) + "%"
                     + ((root.cpuTemp !== null && root.cpuTemp !== undefined) ? "  ·  " + root.cpuTemp.toFixed(0) + "°C" : "")
                     + ((root.cpuFreqCur !== null && root.cpuFreqCur !== undefined) ? "  ·  " + (root.cpuFreqCur / 1000).toFixed(1) + " GHz" : "")
-                Layout.alignment: Qt.AlignRight
             }
 
-            QQC2.Label { text: i18n("RAM"); opacity: 0.7 }
-            QQC2.Label {
-                text: root.ramPct.toFixed(0) + "%  ·  " + root.ramUsedGb.toFixed(1) + "/" + root.ramTotalGb.toFixed(0) + " GB"
-                Layout.alignment: Qt.AlignRight
+            StatRow {
+                label: i18n("RAM")
+                displayMode: Plasmoid.configuration.statsDisplay
+                history: root.ramHistory
+                chartColor: "white"
+                value: root.ramPct.toFixed(0) + "%  ·  " + root.ramUsedGb.toFixed(1) + "/" + root.ramTotalGb.toFixed(0) + " GB"
             }
 
-            QQC2.Label {
-                text: i18n("GPU")
-                opacity: 0.7
-                visible: root.gpuPct !== null && root.gpuPct !== undefined
-            }
-            QQC2.Label {
+            StatRow {
                 visible: root.gpuPresent
-                text: root.gpuPresent
-                      ? root.gpuPct.toFixed(0) + "%  ·  " + root.gpuTemp.toFixed(0) + "°C  ·  " + root.gpuMemPct.toFixed(0) + "% mem"
-                      : ""
-                Layout.alignment: Qt.AlignRight
+                label: i18n("GPU")
+                displayMode: Plasmoid.configuration.statsDisplay
+                history: root.gpuHistory
+                chartColor: Qt.hsva(root.gpuHue, 0.8, 1.0, 1.0)
+                value: root.gpuPresent
+                    ? root.gpuPct.toFixed(0) + "%  ·  " + root.gpuTemp.toFixed(0) + "°C  ·  " + root.gpuMemPct.toFixed(0) + "% mem"
+                    : ""
             }
 
-            QQC2.Label { text: i18n("Processes"); opacity: 0.7 }
-            QQC2.Label {
-                text: root.procCount.toString()
-                Layout.alignment: Qt.AlignRight
+            StatRow {
+                label: i18n("Processes")
+                displayMode: Plasmoid.configuration.statsDisplay
+                history: root.procHistory
+                chartColor: "white"
+                value: root.procCount.toString()
             }
 
-            QQC2.Label { text: i18n("Network"); opacity: 0.7 }
-            QQC2.Label {
-                text: "↓ " + root.fmtRate(root.netRxKbps) + "   ↑ " + root.fmtRate(root.netTxKbps)
-                Layout.alignment: Qt.AlignRight
+            StatRow {
+                label: i18n("Network")
+                displayMode: Plasmoid.configuration.statsDisplay
+                history: root.netHistory
+                chartColor: "#57d6ff"
+                value: "↓ " + root.fmtRate(root.netRxKbps) + "   ↑ " + root.fmtRate(root.netTxKbps)
             }
 
-            QQC2.Label { text: i18n("Disk"); opacity: 0.7 }
-            QQC2.Label {
-                text: "R " + root.fmtRate(root.diskReadKbps) + "   W " + root.fmtRate(root.diskWriteKbps)
-                Layout.alignment: Qt.AlignRight
+            StatRow {
+                label: i18n("Disk")
+                displayMode: Plasmoid.configuration.statsDisplay
+                history: root.diskHistory
+                chartColor: "#ffb454"
+                value: "R " + root.fmtRate(root.diskReadKbps) + "   W " + root.fmtRate(root.diskWriteKbps)
             }
         }
     }

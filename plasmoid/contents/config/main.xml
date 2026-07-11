@@ -12,6 +12,10 @@
     <entry name="showStats" type="Bool">
       <default>true</default>
     </entry>
+    <entry name="statsDisplay" type="Int">
+      <!-- 0 = numbers, 1 = charts, 2 = both -->
+      <default>0</default>
+    </entry>
     <entry name="showBackground" type="Bool">
       <default>true</default>
     </entry>
