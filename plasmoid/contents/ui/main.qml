@@ -119,6 +119,9 @@ PlasmoidItem {
 
     Plasmoid.icon: "utilities-system-monitor"
     Plasmoid.status: PlasmaCore.Types.ActiveStatus
+    Plasmoid.backgroundHints: Plasmoid.configuration.showBackground
+        ? PlasmaCore.Types.StandardBackground
+        : PlasmaCore.Types.NoBackground
     toolTipMainText: i18n("Aura")
     toolTipSubText: i18n("CPU %1%  ·  RAM %2%%3", root.cpuPct.toFixed(0), root.ramPct.toFixed(0),
         (root.gpuPct !== null && root.gpuPct !== undefined) ? i18n("  ·  GPU %1%", root.gpuPct.toFixed(0)) : "")
@@ -185,6 +188,7 @@ PlasmoidItem {
 
         GridLayout {
             Layout.fillWidth: true
+            visible: Plasmoid.configuration.showStats
             columns: 2
             columnSpacing: Kirigami.Units.largeSpacing
             rowSpacing: Kirigami.Units.smallSpacing

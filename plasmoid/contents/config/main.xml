@@ -9,6 +9,12 @@
     <entry name="fadeDurationMs" type="Int">
       <default>1500</default>
     </entry>
+    <entry name="showStats" type="Bool">
+      <default>true</default>
+    </entry>
+    <entry name="showBackground" type="Bool">
+      <default>true</default>
+    </entry>
   </group>
 
 </kcfg>

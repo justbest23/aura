@@ -31,9 +31,15 @@ A native Plasma 6 system-tray applet (`org.aura.systempulse`). Every 200ms it
 `cat`s `~/.cache/aura/stats.json` via the `executable` data engine and
 renders `PulseOrb.qml` in both the compact (tray icon) and full (popup)
 representations — the popup also lists exact CPU/RAM/GPU/network/disk/process
-figures. Has one setting (right-click → Configure Aura…): **Fade duration**,
-how long a signal takes to visibly ease toward a new reading instead of
-snapping (default 1500ms).
+figures. Settings live at right-click → Configure Aura…:
+
+- **Fade duration** — how long a signal takes to visibly ease toward a new
+  reading instead of snapping (default 1500ms).
+- **Show exact sensor readings** — toggles the numbers under the orb, for
+  when you just want the orb itself.
+- **Show panel background** — toggles the popup's background/border
+  (`Plasmoid.backgroundHints`); off gives a borderless, transparent orb, e.g.
+  for dropping onto the desktop rather than the tray.
 
 ### `scripts/pulse_daemon.py`
 

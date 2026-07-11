@@ -4,6 +4,8 @@ import org.kde.kirigami as Kirigami
 
 KCM.SimpleKCM {
     property alias cfg_fadeDurationMs: fadeDurationSpin.value
+    property alias cfg_showStats: showStatsCheck.checked
+    property alias cfg_showBackground: showBackgroundCheck.checked
 
     Kirigami.FormLayout {
         QQC2.SpinBox {
@@ -14,6 +16,17 @@ KCM.SimpleKCM {
             stepSize: 100
             textFromValue: (value) => i18n("%1 ms", value)
             valueFromText: (text) => parseInt(text)
+        }
+
+        QQC2.CheckBox {
+            id: showStatsCheck
+            Kirigami.FormData.label: i18n("Details:")
+            text: i18n("Show exact sensor readings")
+        }
+
+        QQC2.CheckBox {
+            id: showBackgroundCheck
+            text: i18n("Show panel background")
         }
     }
 }
