@@ -17,8 +17,14 @@ Item {
     property real gpuActivity: 0.0    // 0..1
     property bool gpuPresent: false
 
-    property real netActivity: 0.0    // 0..1
-    property real diskActivity: 0.0   // 0..1
+    property real netActivity: 0.0    // 0..1, combined rx+tx
+    property real diskActivity: 0.0   // 0..1, combined read+write
+    property real netRxActivity: 0.0
+    property real netTxActivity: 0.0
+    property real diskReadActivity: 0.0
+    property real diskWriteActivity: 0.0
+    property bool splitNetwork: false
+    property bool splitDisk: false
     property int swarmCount: 8
 
     // How long (ms) a driven value takes to ease toward a new reading,
@@ -27,12 +33,20 @@ Item {
     // whole point is watching a signal visibly change rather than jump.
     property int fadeDurationMs: 1500
 
+    // Pulsing can be turned off entirely (Configure Aura > General). The
+    // rings and swarm don't depend on beat/gpuBeat at all, so they stay
+    // fully animated either way - disabling this only holds the core/aura
+    // at a steady size instead of breathing.
+    property bool pulseEnabled: true
+    property real pulseAmount: pulseEnabled ? 1.0 : 0.0
+    Behavior on pulseAmount { NumberAnimation { duration: 600; easing.type: Easing.InOutQuad } }
+
     Behavior on cpuHue { NumberAnimation { duration: orb.fadeDurationMs; easing.type: Easing.InOutQuad } }
     Behavior on gpuHue { NumberAnimation { duration: orb.fadeDurationMs; easing.type: Easing.InOutQuad } }
     Behavior on breathHalf { NumberAnimation { duration: orb.fadeDurationMs; easing.type: Easing.InOutQuad } }
     Behavior on gpuActivity { NumberAnimation { duration: orb.fadeDurationMs; easing.type: Easing.InOutQuad } }
-    Behavior on netActivity { NumberAnimation { duration: orb.fadeDurationMs; easing.type: Easing.InOutQuad } }
-    Behavior on diskActivity { NumberAnimation { duration: orb.fadeDurationMs; easing.type: Easing.InOutQuad } }
+    // Ring activity fades live inside ActivityRing itself (below), since it
+    // applies equally whether a ring is showing a combined or split value.
 
     property real beat: 0.0
     SequentialAnimation on beat {
@@ -63,7 +77,7 @@ Item {
         delegate: Rectangle {
             anchors.centerIn: parent
             readonly property real layerScale: 1.0 + index * 0.3
-            width: orb.width * (0.5 + 0.5 * orb.gpuActivity + 0.06 * orb.gpuBeat) * layerScale
+            width: orb.width * (0.5 + 0.5 * orb.gpuActivity + 0.06 * orb.gpuBeat * orb.pulseAmount) * layerScale
             height: width
             radius: width / 2
             color: orb.gpuGlowColor
@@ -77,7 +91,7 @@ Item {
         delegate: Rectangle {
             anchors.centerIn: parent
             readonly property real layerScale: 1.0 + index * 0.22
-            width: orb.width * (0.62 + 0.1 * orb.beat) * layerScale
+            width: orb.width * (0.62 + 0.04 * orb.beat * orb.pulseAmount) * layerScale
             height: width
             radius: width / 2
             color: orb.cpuGlowColor
@@ -114,70 +128,70 @@ Item {
         }
     }
 
-    // Network ring - fixed cyan accent, spins faster/brighter with throughput
-    Item {
-        id: netRing
-        anchors.centerIn: parent
-        width: orb.width * 0.92
-        height: width
-        opacity: 0.12 + orb.netActivity * 0.75
-        visible: opacity > 0.02
-
-        RotationAnimation on rotation {
-            running: true
-            loops: Animation.Infinite
-            from: 0; to: 360
-            duration: Math.max(500, 6000 - orb.netActivity * 5400)
-        }
-
-        Repeater {
-            model: 8
-            delegate: Rectangle {
-                readonly property real angle: index * (2 * Math.PI / 8)
-                width: netRing.width * 0.05
-                height: width
-                radius: width / 2
-                color: "#57d6ff"
-                x: netRing.width / 2 + Math.cos(angle) * netRing.width / 2 - width / 2
-                y: netRing.height / 2 + Math.sin(angle) * netRing.height / 2 - height / 2
-            }
-        }
+    // Network - one combined cyan ring by default; splits into two
+    // counter-rotating rings (download/upload) when splitNetwork is on.
+    ActivityRing {
+        visible: !orb.splitNetwork
+        activity: orb.netActivity
+        dashColor: "#57d6ff"
+        dashCount: 8
+        sizeFraction: 0.92
+        direction: 1
+        fadeDurationMs: orb.fadeDurationMs
+    }
+    ActivityRing {
+        visible: orb.splitNetwork
+        activity: orb.netRxActivity
+        dashColor: "#57d6ff"
+        dashCount: 6
+        sizeFraction: 0.92
+        direction: 1
+        fadeDurationMs: orb.fadeDurationMs
+    }
+    ActivityRing {
+        visible: orb.splitNetwork
+        activity: orb.netTxActivity
+        dashColor: "#2f7fae"
+        dashCount: 6
+        sizeFraction: 0.92
+        direction: -1
+        fadeDurationMs: orb.fadeDurationMs
     }
 
-    // Disk ring - fixed amber accent, spins the other way
-    Item {
-        id: diskRing
-        anchors.centerIn: parent
-        width: orb.width * 0.78
-        height: width
-        opacity: 0.1 + orb.diskActivity * 0.75
-        visible: opacity > 0.02
-
-        RotationAnimation on rotation {
-            running: true
-            loops: Animation.Infinite
-            from: 360; to: 0
-            duration: Math.max(500, 6000 - orb.diskActivity * 5400)
-        }
-
-        Repeater {
-            model: 5
-            delegate: Rectangle {
-                readonly property real angle: index * (2 * Math.PI / 5)
-                width: diskRing.width * 0.06
-                height: width
-                radius: width / 2
-                color: "#ffb454"
-                x: diskRing.width / 2 + Math.cos(angle) * diskRing.width / 2 - width / 2
-                y: diskRing.height / 2 + Math.sin(angle) * diskRing.height / 2 - height / 2
-            }
-        }
+    // Disk - one combined amber ring by default; splits into two
+    // counter-rotating rings (read/write) when splitDisk is on.
+    ActivityRing {
+        visible: !orb.splitDisk
+        activity: orb.diskActivity
+        dashColor: "#ffb454"
+        dashCount: 5
+        sizeFraction: 0.78
+        direction: -1
+        fadeDurationMs: orb.fadeDurationMs
+    }
+    ActivityRing {
+        visible: orb.splitDisk
+        activity: orb.diskReadActivity
+        dashColor: "#ffb454"
+        dashCount: 4
+        sizeFraction: 0.78
+        direction: -1
+        fadeDurationMs: orb.fadeDurationMs
+    }
+    ActivityRing {
+        visible: orb.splitDisk
+        activity: orb.diskWriteActivity
+        dashColor: "#ff7a54"
+        dashCount: 4
+        sizeFraction: 0.78
+        direction: 1
+        fadeDurationMs: orb.fadeDurationMs
     }
 
     // CPU core - brightest, topmost
     Rectangle {
         anchors.centerIn: parent
-        width: orb.width * (0.34 + 0.08 * orb.beat)
+        width: orb.width * (0.34 + 0.03 * orb.beat * orb.pulseAmount)
         height: width
         radius: width / 2
         color: orb.cpuCoreColor

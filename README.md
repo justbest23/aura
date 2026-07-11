@@ -18,10 +18,20 @@ hovering the tray icon) shows the exact figures.
 - **Swarm** (drifting motes) — **running process count**, scaled/capped so
   it reads as a texture (a busier machine looks like a busier swarm) rather
   than a literal counter.
-- **Cyan ring** — **network** throughput (rx+tx, log-scaled). **Amber ring**
-  — **disk** throughput (read+write, log-scaled), spinning the opposite
-  direction. Both are fixed colors regardless of load, so they stay
-  recognizable no matter what the core/aura are doing.
+- **Cyan ring** — **network** throughput (rx+tx). **Amber ring** — **disk**
+  throughput (read+write), spinning the opposite direction. Both are fixed
+  colors regardless of load, so they stay recognizable no matter what the
+  core/aura are doing. Each can optionally split into two counter-rotating
+  rings (download/upload, read/write) instead of one combined ring. At zero
+  activity a ring doesn't stop dead - it creeps around very slowly (~60s per
+  turn) rather than looking broken.
+
+  Ring speed/brightness is scaled against a per-machine "100%" reference
+  that ratchets up (never down) the first time real traffic beats it, so a
+  ring at max spin means max for *this* machine's actual hardware, not an
+  arbitrary constant. It's capped at a generous 10Gbps/8GBps so a synthetic
+  burst (like the demo's loopback network stage) can't peg the ceiling at
+  an unrealistic RAM-speed number - see `scripts/pulse_daemon.py`.
 
 ## Components
 
@@ -38,6 +48,9 @@ Aura…:
 
 - **Fade duration** — how long a signal takes to visibly ease toward a new
   reading instead of snapping (default 1500ms).
+- **Enable breathing pulse** — the core/aura's size-pulsing can be turned
+  off entirely. The rings and swarm don't depend on it at all, so they stay
+  fully animated either way; this only holds the core/aura at a steady size.
 - **Show exact sensor readings** — toggles the per-metric rows under the
   orb entirely, for when you just want the orb itself.
 - **Show as** — per-metric rows can show the number, a ~60s sparkline, or
@@ -46,6 +59,9 @@ Aura…:
 - **Show panel background** — toggles the popup's background/border
   (`Plasmoid.backgroundHints`); off gives a borderless, transparent orb, e.g.
   for dropping onto the desktop rather than the tray.
+- **Show network upload/download separately** / **Show disk read/write
+  separately** — split the combined ring into two counter-rotating rings
+  per direction (download vs. upload, read vs. write).
 
 ### `scripts/pulse_daemon.py`
 
@@ -54,9 +70,11 @@ A small long-running sampler (uses `psutil`) that writes
 and disk throughput (delta since last tick), process count, and GPU
 utilization/temp/memory via `nvidia-smi` (refreshed ~1x/second since spawning
 `nvidia-smi` is comparatively slow; skipped gracefully if there's no NVIDIA
-GPU). Runs as `systemd/aura-pulse.service`. The widget just reads the file
-the daemon keeps warm, rather than forking `python3` + importing `psutil` on
-every poll — the cheap way to get a sub-second refresh rate.
+GPU). Also maintains `~/.cache/aura/calibration.json`, the per-machine "100%"
+throughput reference described above. Runs as `systemd/aura-pulse.service`.
+The widget just reads the file the daemon keeps warm, rather than forking
+`python3` + importing `psutil` on every poll — the cheap way to get a
+sub-second refresh rate.
 
 ### `scripts/demo.sh`
 
@@ -64,8 +82,12 @@ Walks through the five signals one at a time: prints what to look for, then
 generates a few real seconds of that specific load (CPU, GPU, network, disk,
 process count) so you can watch the widget react live. Every stage
 self-terminates (`timeout`-bound) and an `EXIT` trap sweeps up anything left
-running or on disk, so Ctrl-C at any point is safe. Run it alongside the
-widget:
+running or on disk; Ctrl-C at any point stops the whole demo immediately,
+not just the current stage. The disk stage writes its scratch file under
+`~/.cache`, not `/tmp` — on many distros (including a default CachyOS
+install) `/tmp` is tmpfs (RAM-backed), so writes there never touch a real
+block device and the amber ring (and disk calibration) would never see them.
+Run it alongside the widget:
 
 ```
 ./scripts/demo.sh

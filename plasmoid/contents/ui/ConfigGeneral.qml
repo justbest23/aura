@@ -4,9 +4,12 @@ import org.kde.kirigami as Kirigami
 
 KCM.SimpleKCM {
     property alias cfg_fadeDurationMs: fadeDurationSpin.value
+    property alias cfg_pulseEnabled: pulseEnabledCheck.checked
     property alias cfg_showStats: showStatsCheck.checked
     property alias cfg_statsDisplay: statsDisplayCombo.currentIndex
     property alias cfg_showBackground: showBackgroundCheck.checked
+    property alias cfg_splitNetwork: splitNetworkCheck.checked
+    property alias cfg_splitDisk: splitDiskCheck.checked
 
     Kirigami.FormLayout {
         QQC2.SpinBox {
@@ -20,8 +23,13 @@ KCM.SimpleKCM {
         }
 
         QQC2.CheckBox {
+            id: pulseEnabledCheck
+            Kirigami.FormData.label: i18n("Orb:")
+            text: i18n("Enable breathing pulse")
+        }
+
+        QQC2.CheckBox {
             id: showStatsCheck
-            Kirigami.FormData.label: i18n("Details:")
             text: i18n("Show exact sensor readings")
         }
 
@@ -35,6 +43,17 @@ KCM.SimpleKCM {
         QQC2.CheckBox {
             id: showBackgroundCheck
             text: i18n("Show panel background")
+        }
+
+        QQC2.CheckBox {
+            id: splitNetworkCheck
+            Kirigami.FormData.label: i18n("Rings:")
+            text: i18n("Show network upload/download separately")
+        }
+
+        QQC2.CheckBox {
+            id: splitDiskCheck
+            text: i18n("Show disk read/write separately")
         }
     }
 }

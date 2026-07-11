@@ -23,6 +23,42 @@ INTERVAL = 0.2  # 5Hz - "multiple times per second" without hammering the GPU
 GPU_EVERY = 5  # refresh nvidia-smi every ~1s
 STATE_DIR = os.path.expanduser("~/.cache/aura")
 STATE_FILE = os.path.join(STATE_DIR, "stats.json")
+CALIBRATION_FILE = os.path.join(STATE_DIR, "calibration.json")
+
+# Ring "100%" reference for network/disk throughput, per machine. Starts at a
+# generic guess and ratchets up (never down) the first time real traffic
+# beats it - e.g. running scripts/demo.sh's network/disk stages teaches it
+# this machine's real ceiling in one pass. Persisted so it survives restarts.
+#
+# Capped per metric: net_io_counters() includes loopback, and demo.sh's
+# network stage deliberately uses loopback (self-contained, no real transfer)
+# to get a big burst safely - which hits RAM speed (tens of Gbps), not real
+# network speed. Uncapped, that one demo run would permanently peg the ring's
+# "100%" so high that even a maxed-out real gigabit link looked idle. The
+# caps are generous (10Gbps / 8GB/s) - well above realistic home/office
+# network and consumer NVMe throughput - so genuine fast hardware still
+# calibrates correctly; only the synthetic loopback figure gets clamped.
+DEFAULT_MAX_KBPS = 100000.0  # 100 MB/s
+NET_MAX_CAP_KBPS = 1250000.0  # 10 Gbps
+DISK_MAX_CAP_KBPS = 8000000.0  # 8 GB/s
+CALIBRATION_CAPS = {
+    "net_max_kbps": NET_MAX_CAP_KBPS,
+    "net_rx_max_kbps": NET_MAX_CAP_KBPS,
+    "net_tx_max_kbps": NET_MAX_CAP_KBPS,
+    "disk_max_kbps": DISK_MAX_CAP_KBPS,
+    "disk_read_max_kbps": DISK_MAX_CAP_KBPS,
+    "disk_write_max_kbps": DISK_MAX_CAP_KBPS,
+}
+CALIBRATION_KEYS = tuple(CALIBRATION_CAPS.keys())
+
+
+def load_calibration() -> dict:
+    try:
+        with open(CALIBRATION_FILE) as f:
+            saved = json.load(f)
+        return {key: saved.get(key, DEFAULT_MAX_KBPS) for key in CALIBRATION_KEYS}
+    except Exception:
+        return {key: DEFAULT_MAX_KBPS for key in CALIBRATION_KEYS}
 
 
 def gpu_stats():
@@ -55,11 +91,11 @@ def cpu_temp():
     return None
 
 
-def write_state(state: dict) -> None:
-    tmp_path = STATE_FILE + ".tmp"
+def write_json(path: str, data: dict) -> None:
+    tmp_path = path + ".tmp"
     with open(tmp_path, "w") as f:
-        json.dump(state, f)
-    os.replace(tmp_path, STATE_FILE)
+        json.dump(data, f)
+    os.replace(tmp_path, path)
 
 
 def main() -> None:
@@ -70,6 +106,7 @@ def main() -> None:
     prev_disk = psutil.disk_io_counters()
     prev_t = time.time()
     gpu_pct = gpu_temp = gpu_mem_pct = None
+    calibration = load_calibration()
 
     tick = 0
     while True:
@@ -95,7 +132,24 @@ def main() -> None:
         if tick % GPU_EVERY == 0:
             gpu_pct, gpu_temp, gpu_mem_pct = gpu_stats()
 
-        write_state(
+        observed = {
+            "net_max_kbps": net_rx_kbps + net_tx_kbps,
+            "net_rx_max_kbps": net_rx_kbps,
+            "net_tx_max_kbps": net_tx_kbps,
+            "disk_max_kbps": disk_r_kbps + disk_w_kbps,
+            "disk_read_max_kbps": disk_r_kbps,
+            "disk_write_max_kbps": disk_w_kbps,
+        }
+        new_maxes = {
+            key: min(CALIBRATION_CAPS[key], max(calibration[key], observed[key]))
+            for key in CALIBRATION_KEYS
+        }
+        if new_maxes != calibration:
+            calibration = new_maxes
+            write_json(CALIBRATION_FILE, calibration)
+
+        write_json(
+            STATE_FILE,
             {
                 "cpu_pct": round(cpu_pct, 1),
                 "cpu_temp": cpu_temp(),
@@ -113,7 +167,8 @@ def main() -> None:
                 "net_tx_kbps": round(net_tx_kbps, 1),
                 "disk_read_kbps": round(disk_r_kbps, 1),
                 "disk_write_kbps": round(disk_w_kbps, 1),
-            }
+                **calibration,
+            },
         )
 
 

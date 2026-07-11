@@ -86,7 +86,10 @@ fi
 
 # --- Disk: the amber ring ------------------------------------------------------
 say "Disk — watch the amber ring: it spins the OPPOSITE way from the cyan one. Hammering a scratch file with direct writes for 5s."
-SCRATCH_FILE=$(mktemp /tmp/aura-demo-XXXXXX.bin)
+# Not /tmp: on many distros (including this one) it's tmpfs (RAM-backed),
+# so writes there never touch a real block device and psutil's disk
+# counters - and the amber ring - never see them.
+SCRATCH_FILE=$(mktemp "$HOME/.cache/aura-demo-XXXXXX.bin")
 timeout 5 bash -c "while true; do dd if=/dev/zero of='$SCRATCH_FILE' bs=1M count=200 oflag=direct status=none; done"
 rm -f "$SCRATCH_FILE"
 SCRATCH_FILE=""

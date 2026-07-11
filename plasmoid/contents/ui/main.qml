@@ -31,6 +31,17 @@ PlasmoidItem {
     property var diskWriteKbps: 0
     property var procCount: 0
 
+    // Per-machine "100%" reference for each ring, learned by aura-pulse.service
+    // (ratchets up the first time real traffic beats the current ceiling -
+    // e.g. running scripts/demo.sh's network/disk stages calibrates these in
+    // one pass). Defaults match a generic guess until real data replaces them.
+    property real netMaxKbps: 100000
+    property real netRxMaxKbps: 100000
+    property real netTxMaxKbps: 100000
+    property real diskMaxKbps: 100000
+    property real diskReadMaxKbps: 100000
+    property real diskWriteMaxKbps: 100000
+
     // Rolling ~60s history for the sparkline charts, one sample/sec (decoupled
     // from the 200ms poll rate - that's plenty fine-grained for a minute-wide
     // trend line and keeps the arrays small).
@@ -55,8 +66,12 @@ PlasmoidItem {
     readonly property real gpuHeat: computeGpuHeat()
     readonly property real gpuHue: Math.max(0, 0.68 - gpuHeat * 0.68)
 
-    readonly property real netActivity: activityFromKbps(netRxKbps + netTxKbps)
-    readonly property real diskActivity: activityFromKbps(diskReadKbps + diskWriteKbps)
+    readonly property real netActivity: activityFromKbps(netRxKbps + netTxKbps, netMaxKbps)
+    readonly property real diskActivity: activityFromKbps(diskReadKbps + diskWriteKbps, diskMaxKbps)
+    readonly property real netRxActivity: activityFromKbps(netRxKbps, netRxMaxKbps)
+    readonly property real netTxActivity: activityFromKbps(netTxKbps, netTxMaxKbps)
+    readonly property real diskReadActivity: activityFromKbps(diskReadKbps, diskReadMaxKbps)
+    readonly property real diskWriteActivity: activityFromKbps(diskWriteKbps, diskWriteMaxKbps)
 
     // Process count becomes a drifting swarm of motes - more going on, more
     // fireflies. Scaled/capped so it stays a texture, not a literal counter.
@@ -98,8 +113,8 @@ PlasmoidItem {
         return Math.max.apply(null, vals)
     }
 
-    function activityFromKbps(kbps) {
-        return Math.max(0, Math.min(1, Math.log(kbps + 1) / Math.LN10 / 5))
+    function activityFromKbps(kbps, maxKbps) {
+        return Math.max(0, Math.min(1, kbps / Math.max(1, maxKbps)))
     }
 
     function fmtRate(kbps) {
@@ -143,6 +158,15 @@ PlasmoidItem {
         root.diskReadKbps = root.ema(root.diskReadKbps, s.disk_read_kbps)
         root.diskWriteKbps = root.ema(root.diskWriteKbps, s.disk_write_kbps)
         root.procCount = s.proc_count
+        // Calibration ceilings ratchet up rarely and deliberately (a genuine
+        // new peak) - smoothing them would just delay the moment they're
+        // supposed to capture, so these are assigned directly, not eased.
+        root.netMaxKbps = s.net_max_kbps
+        root.netRxMaxKbps = s.net_rx_max_kbps
+        root.netTxMaxKbps = s.net_tx_max_kbps
+        root.diskMaxKbps = s.disk_max_kbps
+        root.diskReadMaxKbps = s.disk_read_max_kbps
+        root.diskWriteMaxKbps = s.disk_write_max_kbps
     }
 
     function pushHistory(arr, val) {
@@ -213,8 +237,15 @@ PlasmoidItem {
             gpuPresent: root.gpuPresent
             netActivity: root.netActivity
             diskActivity: root.diskActivity
+            netRxActivity: root.netRxActivity
+            netTxActivity: root.netTxActivity
+            diskReadActivity: root.diskReadActivity
+            diskWriteActivity: root.diskWriteActivity
+            splitNetwork: Plasmoid.configuration.splitNetwork
+            splitDisk: Plasmoid.configuration.splitDisk
             swarmCount: root.swarmCount
             fadeDurationMs: Plasmoid.configuration.fadeDurationMs
+            pulseEnabled: Plasmoid.configuration.pulseEnabled
         }
     }
 
@@ -234,8 +265,15 @@ PlasmoidItem {
             gpuPresent: root.gpuPresent
             netActivity: root.netActivity
             diskActivity: root.diskActivity
+            netRxActivity: root.netRxActivity
+            netTxActivity: root.netTxActivity
+            diskReadActivity: root.diskReadActivity
+            diskWriteActivity: root.diskWriteActivity
+            splitNetwork: Plasmoid.configuration.splitNetwork
+            splitDisk: Plasmoid.configuration.splitDisk
             swarmCount: root.swarmCount
             fadeDurationMs: Plasmoid.configuration.fadeDurationMs
+            pulseEnabled: Plasmoid.configuration.pulseEnabled
         }
 
         ColumnLayout {
