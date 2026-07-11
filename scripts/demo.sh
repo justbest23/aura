@@ -16,7 +16,11 @@ cleanup() {
     done
     [[ -n "$SCRATCH_FILE" && -f "$SCRATCH_FILE" ]] && rm -f "$SCRATCH_FILE"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+# A trap that doesn't call exit just resumes the script afterward - without
+# this, Ctrl-C only killed the current stage's load and the demo carried on
+# to the next stage, so quitting took one Ctrl-C per remaining stage.
+trap 'echo; echo "Stopping."; exit 130' INT TERM
 
 say() {
     echo
@@ -34,6 +38,7 @@ countdown() {
 
 echo "Aura demo - open the widget (panel/tray) now if it isn't already."
 echo "Five stages, ~10s each: CPU, GPU, network, disk, process count."
+echo "Ctrl-C at any point stops the demo immediately and cleans up."
 countdown 3
 
 # --- CPU: core color + pulse speed -----------------------------------------
