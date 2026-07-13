@@ -6,12 +6,15 @@ import QtQuick
 //   - swarm:       drifting motes, count from running process count
 //   - net ring:    fixed cyan dashes, spin speed/brightness = network throughput
 //   - disk ring:   fixed amber dashes, spins the other way = disk throughput
-//   - CPU core:    brightest, topmost; color = CPU heat, pulse speed = clock boost
+//   - CPU core:    brightest, topmost; color = CPU heat, pulse speed = clock
+//                  boost, and the density of the swirl inside it = RAM usage
 Item {
     id: orb
 
     property real cpuHue: 0.6         // 0 (hot/red) .. 0.68 (cool/blue)
     property real breathHalf: 1300    // ms per half-breath; lower = faster clock boost
+    property real ramLevel: 0.5       // 0..1 RAM fullness -> density of the core's swirl
+    Behavior on ramLevel { NumberAnimation { duration: orb.fadeDurationMs; easing.type: Easing.InOutQuad } }
 
     property real gpuHue: 0.6
     property real gpuActivity: 0.0    // 0..1
@@ -26,6 +29,8 @@ Item {
     property bool splitNetwork: false
     property bool splitDisk: false
     property int swarmCount: 8
+    property real swarmBoost: 0.0     // 0..1, process surge above baseline
+    Behavior on swarmBoost { NumberAnimation { duration: orb.fadeDurationMs; easing.type: Easing.InOutQuad } }
 
     // How long (ms) a driven value takes to ease toward a new reading,
     // instead of snapping - configurable via the widget's settings (General
@@ -69,6 +74,10 @@ Item {
 
     readonly property color cpuGlowColor: Qt.hsva(cpuHue, 0.65, 1.0, 1.0)
     readonly property color cpuCoreColor: Qt.hsva(cpuHue, 0.8, 1.0, 1.0)
+    // Wisps are a washed-out (low saturation) version of the core color so
+    // they stay visibly lighter than the shell at every hue - same-color
+    // wisps disappear whenever the hue lands somewhere perceptually dark.
+    readonly property color swirlWispColor: Qt.hsva(cpuHue, 0.4, 1.0, 1.0)
     readonly property color gpuGlowColor: Qt.hsva(gpuHue, 0.7, 1.0, 1.0)
 
     // GPU aura - furthest back, nearly invisible idle, blooms with load
@@ -114,14 +123,22 @@ Item {
         Repeater {
             model: orb.swarmCount
             delegate: Rectangle {
-                readonly property real angle: (index / orb.swarmCount) * 2 * Math.PI + orb.prand(index) * 1.4
+                // Position from index alone (not index/count): when the count
+                // changes, existing motes stay put and new ones appear in
+                // their own spots, instead of the whole swarm reshuffling.
+                readonly property real angle: orb.prand(index) * 2 * Math.PI
                 readonly property real orbitR: swarm.width / 2 * (0.95 + orb.prand(index + 50) * 0.28)
                 readonly property real twinklePhase: orb.prand(index + 200) * Math.PI * 2
-                width: swarm.width * (0.018 + orb.prand(index + 100) * 0.02)
+                // Newly spawned motes fade in rather than popping
+                property real appear: 0.0
+                NumberAnimation on appear { to: 1.0; duration: 900; easing.type: Easing.OutQuad }
+                width: swarm.width * (0.018 + orb.prand(index + 100) * 0.02) * (1.0 + 0.35 * orb.swarmBoost)
                 height: width
                 radius: width / 2
                 color: "white"
-                opacity: (0.25 + orb.prand(index + 300) * 0.35) * (0.6 + 0.4 * Math.sin(orb.beat * Math.PI * 2 + twinklePhase))
+                opacity: appear * (0.75 + 0.45 * orb.swarmBoost)
+                    * (0.25 + orb.prand(index + 300) * 0.35)
+                    * (0.6 + 0.4 * Math.sin(orb.beat * Math.PI * 2 + twinklePhase))
                 x: swarm.width / 2 + Math.cos(angle) * orbitR - width / 2
                 y: swarm.height / 2 + Math.sin(angle) * orbitR - height / 2
             }
@@ -188,12 +205,77 @@ Item {
         fadeDurationMs: orb.fadeDurationMs
     }
 
-    // CPU core - brightest, topmost
-    Rectangle {
+    // CPU core - brightest, topmost. Color/pulse are CPU; RAM is the density
+    // of the swirl inside it: two counter-rotating layers of soft wisps, and
+    // more memory in use = more (and brighter) wisps, so a filling machine
+    // reads as the core churning toward solid, an idle one as a dim shell
+    // with a few embers drifting around inside.
+    component SwirlLayer: Item {
+        id: swirlLayer
+        property int seedBase: 0
+        property int spinMs: 9000
+        property int spinDirection: 1
+        anchors.fill: parent
+        RotationAnimation on rotation {
+            running: true
+            loops: Animation.Infinite
+            from: swirlLayer.spinDirection > 0 ? 0 : 360
+            to: swirlLayer.spinDirection > 0 ? 360 : 0
+            duration: swirlLayer.spinMs
+        }
+        Repeater {
+            model: orb.swirlCount
+            // A streak, not a dot: a thin rounded bar lying tangent to its
+            // orbit, so the layer's rotation drags it around like a current.
+            delegate: Rectangle {
+                readonly property real lenFrac: 0.35 + orb.prand(index + swirlLayer.seedBase) * 0.25
+                readonly property real thickFrac: 0.07 + orb.prand(index + swirlLayer.seedBase + 40) * 0.06
+                readonly property real ang: orb.prand(index + swirlLayer.seedBase + 80) * 2 * Math.PI
+                // orbit capped so the streak's far corners stay inside the
+                // core circle: need sqrt(d^2 + (len/2)^2) + thick/2 <= 0.5
+                readonly property real maxOrbitFrac: Math.sqrt(Math.max(0, Math.pow(0.5 - thickFrac / 2, 2) - Math.pow(lenFrac / 2, 2)))
+                readonly property real orbitFrac: orb.prand(index + swirlLayer.seedBase + 120) * maxOrbitFrac
+                property real appear: 0.0
+                NumberAnimation on appear { to: 1.0; duration: 900; easing.type: Easing.OutQuad }
+                width: swirlLayer.width * lenFrac
+                height: swirlLayer.width * thickFrac
+                radius: height / 2
+                color: orb.swirlWispColor
+                opacity: appear * (0.2 + 0.25 * orb.ramLevel + orb.prand(index + swirlLayer.seedBase + 160) * 0.15)
+                x: swirlLayer.width / 2 + Math.cos(ang) * swirlLayer.width * orbitFrac - width / 2
+                y: swirlLayer.height / 2 + Math.sin(ang) * swirlLayer.width * orbitFrac - height / 2
+                rotation: ang * 180 / Math.PI + 90
+            }
+        }
+    }
+    // Streaks per layer: a couple of lazy currents when memory is free, a
+    // churning crowd when full. Deadband instead of a live binding: the
+    // smoothed ramLevel wobbles a fraction of a percent every sample, and a
+    // count binding sitting on a rounding boundary adds-and-removes the same
+    // streak over and over - each re-add replays its fade-in, which reads
+    // as the core flashing.
+    property int swirlCount: 3
+    onRamLevelChanged: {
+        var target = 2 + ramLevel * 10
+        if (Math.abs(target - swirlCount) > 0.75) {
+            swirlCount = Math.round(target)
+        }
+    }
+
+    Item {
+        id: core
         anchors.centerIn: parent
         width: orb.width * (0.34 + 0.03 * orb.beat * orb.pulseAmount)
         height: width
-        radius: width / 2
-        color: orb.cpuCoreColor
+
+        // vessel shell - dim, so the swirl density has something to fill
+        Rectangle {
+            anchors.fill: parent
+            radius: width / 2
+            color: orb.cpuCoreColor
+            opacity: 0.3
+        }
+        SwirlLayer { seedBase: 400; spinMs: 9000; spinDirection: 1 }
+        SwirlLayer { seedBase: 700; spinMs: 14000; spinDirection: -1 }
     }
 }

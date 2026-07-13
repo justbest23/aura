@@ -22,12 +22,26 @@ Item {
     height: width
     opacity: 0.1 + ring.activity * 0.75
 
-    RotationAnimation on rotation {
+    // Spin speed interpolates geometrically, not linearly: idle-to-busy spans
+    // a ~120x speed range, and blending the duration (or speed) linearly
+    // crams every visibly-fast speed into the last few percent of activity -
+    // a ring at 0.8 would still take 12s/turn. In log space each step up in
+    // activity multiplies the speed, so the whole range reads.
+    readonly property real idleDegPerMs: 360 / idleDurationMs
+    readonly property real busyDegPerMs: 360 / busyDurationMs
+    readonly property real degPerMs: idleDegPerMs * Math.pow(busyDegPerMs / idleDegPerMs, activity)
+
+    // Integrate the rotation per-frame instead of a looping RotationAnimation
+    // with a bound duration: a running animation loop only picks a duration
+    // change up when the loop restarts, and the idle loop is 60 SECONDS long
+    // - a traffic burst could take a minute to visibly speed the ring up
+    // (and be over before it did).
+    FrameAnimation {
         running: true
-        loops: Animation.Infinite
-        from: ring.direction >= 0 ? 0 : 360
-        to: ring.direction >= 0 ? 360 : 0
-        duration: Math.max(ring.busyDurationMs, ring.idleDurationMs - ring.activity * (ring.idleDurationMs - ring.busyDurationMs))
+        onTriggered: {
+            var step = ring.degPerMs * frameTime * 1000
+            ring.rotation = (ring.rotation + (ring.direction >= 0 ? step : -step)) % 360
+        }
     }
 
     Repeater {

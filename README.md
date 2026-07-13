@@ -7,17 +7,25 @@ hovering the tray icon) shows the exact figures.
 
 ## What drives the visual
 
-- **Core** (brightest, center) — **CPU**. Color shifts blue → red with CPU
-  heat (utilization, RAM pressure, package temp). Breathing speed tracks how
-  hard the clock is currently boosting (idle park speed → turbo), which is
+- **Core** (brightest, center) — **CPU + RAM**. Color shifts blue → red with
+  CPU heat (utilization, package temp). Breathing speed tracks how hard the
+  clock is currently boosting (idle park speed → turbo), which is
   deliberately a *different* signal from the color: a single latency-bound
-  core can boost to max while overall utilization/color stays calm.
+  core can boost to max while overall utilization/color stays calm. Inside
+  the core, **RAM usage is the density of a churning swirl** — a machine
+  with free memory shows a dim shell with a few embers drifting around in
+  it; as memory fills, the wisps multiply and brighten until the core
+  churns nearly solid. Independent of what the color and pulse are doing.
 - **Aura** (soft bloom around the core) — **GPU**. Its own independent color
   from GPU heat (utilization, memory, temp). Nearly invisible at idle,
   visibly blooms out under load (gaming, rendering, GPU compute).
-- **Swarm** (drifting motes) — **running process count**, scaled/capped so
-  it reads as a texture (a busier machine looks like a busier swarm) rather
-  than a literal counter.
+- **Swarm** (drifting motes) — **process count relative to this machine's
+  normal**. The absolute count is a poor signal (a desktop idles at several
+  hundred processes and rarely moves by more than a few percent), so the
+  daemon learns a baseline — chasing drops quickly, rises only over minutes —
+  and the swarm reacts to the *surge* above it: a handful of ambient motes at
+  rest, multiplying and brightening when something spawns a burst of
+  processes (a build, a demo stage), then thinning back out.
 - **Cyan ring** — **network** throughput (rx+tx). **Amber ring** — **disk**
   throughput (read+write), spinning the opposite direction. Both are fixed
   colors regardless of load, so they stay recognizable no matter what the
@@ -26,12 +34,19 @@ hovering the tray icon) shows the exact figures.
   activity a ring doesn't stop dead - it creeps around very slowly (~60s per
   turn) rather than looking broken.
 
-  Ring speed/brightness is scaled against a per-machine "100%" reference
-  that ratchets up (never down) the first time real traffic beats it, so a
-  ring at max spin means max for *this* machine's actual hardware, not an
-  arbitrary constant. It's capped at a generous 10Gbps/8GBps so a synthetic
-  burst (like the demo's loopback network stage) can't peg the ceiling at
-  an unrealistic RAM-speed number - see `scripts/pulse_daemon.py`.
+  Ring speed/brightness is scaled against a per-machine "100%" reference: a
+  **moving max** that jumps up instantly when real traffic beats it and then
+  decays with a ~12h half-life, so a ring at max spin means max for *this*
+  machine's actual hardware — and one freak burst (a synthetic benchmark, a
+  one-off cache-speed copy) stops defining "100%" within a day instead of
+  permanently pinning the rings near zero. Loopback is excluded from the
+  network counters entirely (localhost transfers run at RAM speed and
+  aren't network activity), and generous sanity caps (10Gbps / 8GB/s) bound
+  the reference — see `scripts/pulse_daemon.py`. The rings' response to
+  rate/max is square-root rather than linear: everyday traffic is a few
+  percent of a fast machine's ceiling, which linearly would be an invisible
+  ring; sqrt keeps the top anchored but makes "some traffic" visibly
+  different from "none".
 
 ## Components
 
@@ -67,7 +82,8 @@ Aura…:
 
 A small long-running sampler (uses `psutil`) that writes
 `~/.cache/aura/stats.json` roughly 5x/second — CPU%/temp/clock, RAM, network
-and disk throughput (delta since last tick), process count, and GPU
+and disk throughput (delta since last tick), process count (plus the learned
+baseline the swarm measures surges against), and GPU
 utilization/temp/memory via `nvidia-smi` (refreshed ~1x/second since spawning
 `nvidia-smi` is comparatively slow; skipped gracefully if there's no NVIDIA
 GPU). Also maintains `~/.cache/aura/calibration.json`, the per-machine "100%"
@@ -78,9 +94,12 @@ sub-second refresh rate.
 
 ### `scripts/demo.sh`
 
-Walks through the five signals one at a time: prints what to look for, then
-generates a few real seconds of that specific load (CPU, GPU, network, disk,
-process count) so you can watch the widget react live. Every stage
+Walks through the six signals one at a time: prints what to look for, then
+generates a few real seconds of that specific load (CPU, RAM, GPU, network,
+disk, process count) so you can watch the widget react live. The RAM stage
+holds a real allocation for a few seconds (a quarter of total RAM, capped at
+half of what's currently free so it can't push a busy machine into swap).
+Every stage
 self-terminates (`timeout`-bound) and an `EXIT` trap sweeps up anything left
 running or on disk; Ctrl-C at any point stops the whole demo immediately,
 not just the current stage. The disk stage writes its scratch file under
@@ -94,9 +113,15 @@ Run it alongside the widget:
 ```
 
 The GPU stage needs an NVIDIA GPU + an `ffmpeg` build with CUDA filters
-(`scale_cuda`); the network stage needs `socat`. Both are auto-detected and
-skipped with a message if unavailable — the other three stages have no
-extra dependencies beyond coreutils.
+(`scale_cuda`); the network stage needs `curl` and an internet connection
+(it downloads from Cloudflare's speed-test endpoint — loopback traffic is
+excluded from the network counters, so a localhost blast wouldn't register).
+Both are auto-detected and skipped with a message if unavailable — the
+other four stages have no extra dependencies beyond coreutils and python3. The GPU stage keeps its load entirely
+on the GPU (NVDEC loop-decode of a pre-encoded clip, bounced through chained
+CUDA scale kernels in GPU memory) so the CPU core stays calm while the aura
+blooms — synthesizing test frames on the CPU and uploading them would light
+up both at once and muddy what the stage is demonstrating.
 
 ## Requirements
 

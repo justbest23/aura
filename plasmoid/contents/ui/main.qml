@@ -30,14 +30,15 @@ PlasmoidItem {
     property var diskReadKbps: 0
     property var diskWriteKbps: 0
     property var procCount: 0
+    property var procBaseline: 0
 
     // Per-machine "100%" reference for each ring, learned by aura-pulse.service
     // (ratchets up the first time real traffic beats the current ceiling -
     // e.g. running scripts/demo.sh's network/disk stages calibrates these in
     // one pass). Defaults match a generic guess until real data replaces them.
-    property real netMaxKbps: 100000
-    property real netRxMaxKbps: 100000
-    property real netTxMaxKbps: 100000
+    property real netMaxKbps: 12500
+    property real netRxMaxKbps: 12500
+    property real netTxMaxKbps: 12500
     property real diskMaxKbps: 100000
     property real diskReadMaxKbps: 100000
     property real diskWriteMaxKbps: 100000
@@ -55,16 +56,19 @@ PlasmoidItem {
 
     readonly property bool gpuPresent: root.gpuPct !== null && root.gpuPct !== undefined
 
-    // CPU is the core: color from CPU heat, pulse speed from clock boost.
+    // The core: color from CPU heat, pulse speed from clock boost, and the
+    // density of its inner swirl from RAM usage (passed as ramLevel below).
+    // Cool end is 0.58 (azure), not 0.68 (violet): violet is perceptually
+    // the darkest hue in HSV, and a dark core swallows the swirl entirely.
     readonly property real cpuHeat: computeCpuHeat()
-    readonly property real cpuHue: Math.max(0, 0.68 - cpuHeat * 0.68)
+    readonly property real cpuHue: Math.max(0, 0.58 - cpuHeat * 0.58)
     readonly property real freqRatio: computeFreqRatio()
     readonly property real breathHalf: 1300 - freqRatio * 920
 
     // GPU is the aura around the core: its own color and its own bloom,
     // independent of CPU state entirely.
     readonly property real gpuHeat: computeGpuHeat()
-    readonly property real gpuHue: Math.max(0, 0.68 - gpuHeat * 0.68)
+    readonly property real gpuHue: Math.max(0, 0.58 - gpuHeat * 0.58)
 
     readonly property real netActivity: activityFromKbps(netRxKbps + netTxKbps, netMaxKbps)
     readonly property real diskActivity: activityFromKbps(diskReadKbps + diskWriteKbps, diskMaxKbps)
@@ -73,9 +77,27 @@ PlasmoidItem {
     readonly property real diskReadActivity: activityFromKbps(diskReadKbps, diskReadMaxKbps)
     readonly property real diskWriteActivity: activityFromKbps(diskWriteKbps, diskWriteMaxKbps)
 
-    // Process count becomes a drifting swarm of motes - more going on, more
-    // fireflies. Scaled/capped so it stays a texture, not a literal counter.
-    readonly property int swarmCount: Math.max(5, Math.min(20, Math.round(root.procCount / 30)))
+    // Process count becomes a drifting swarm of motes. The absolute count is
+    // useless as a direct signal - a desktop idles at several hundred, so
+    // count/N is permanently pegged at any sane cap. Instead the daemon
+    // publishes a slow baseline and the swarm reacts to the *surge* above it:
+    // a handful of ambient motes for texture, plus roughly one extra mote per
+    // dozen processes beyond normal, and a brightness boost alongside.
+    // baseline 0 = daemon predates proc_baseline; stay ambient rather than
+    // reading the whole count as one giant surge
+    readonly property real procSurge: root.procBaseline > 0 ? Math.max(0, root.procCount - root.procBaseline) : 0
+    readonly property real swarmBoost: Math.max(0, Math.min(1, procSurge / 250))
+    // Deadband, not a binding: the count jitters by a few processes every
+    // sample, and a mote-count binding sitting on a rounding boundary
+    // adds-and-removes the same mote over and over - each re-add replays
+    // its fade-in, which reads as a flashing dot.
+    property int swarmCount: 8
+    onProcSurgeChanged: {
+        var target = Math.min(48, 8 + procSurge / 12)
+        if (Math.abs(target - swarmCount) > 0.75) {
+            swarmCount = Math.round(target)
+        }
+    }
 
     // How hard the CPU clock is currently racing (0 = park speed, 1 = full
     // boost) - independent of heat: a latency-bound single core can boost to
@@ -91,8 +113,11 @@ PlasmoidItem {
         return Math.max(0, Math.min(1, (root.cpuFreqCur - root.cpuFreqMin) / (root.cpuFreqMax - root.cpuFreqMin)))
     }
 
+    // No RAM in here: memory used to nudge this color, but it has its own
+    // visual now (the core's resting size), so the color stays purely
+    // CPU - utilization or package temp, whichever runs hotter.
     function computeCpuHeat() {
-        var vals = [root.cpuPct / 100, root.ramPct / 100 * 0.5]
+        var vals = [root.cpuPct / 100]
         if (root.cpuTemp !== null && root.cpuTemp !== undefined) {
             vals.push(Math.max(0, Math.min(1, (root.cpuTemp - 45) / 40)))
         }
@@ -113,8 +138,12 @@ PlasmoidItem {
         return Math.max.apply(null, vals)
     }
 
+    // sqrt, not linear: everyday traffic is a few percent of a fast machine's
+    // ceiling, and linearly that's an invisible ring. sqrt leaves the top
+    // anchored (max is still max) but lifts the low end - 1% of max reads as
+    // ~10% activity - so "some traffic" is visibly different from "none".
     function activityFromKbps(kbps, maxKbps) {
-        return Math.max(0, Math.min(1, kbps / Math.max(1, maxKbps)))
+        return Math.sqrt(Math.max(0, Math.min(1, kbps / Math.max(1, maxKbps))))
     }
 
     function fmtRate(kbps) {
@@ -158,6 +187,9 @@ PlasmoidItem {
         root.diskReadKbps = root.ema(root.diskReadKbps, s.disk_read_kbps)
         root.diskWriteKbps = root.ema(root.diskWriteKbps, s.disk_write_kbps)
         root.procCount = s.proc_count
+        if (s.proc_baseline !== undefined) {
+            root.procBaseline = s.proc_baseline
+        }
         // Calibration ceilings ratchet up rarely and deliberately (a genuine
         // new peak) - smoothing them would just delay the moment they're
         // supposed to capture, so these are assigned directly, not eased.
@@ -232,6 +264,7 @@ PlasmoidItem {
             anchors.fill: parent
             cpuHue: root.cpuHue
             breathHalf: root.breathHalf
+            ramLevel: root.ramPct / 100
             gpuHue: root.gpuHue
             gpuActivity: root.gpuHeat
             gpuPresent: root.gpuPresent
@@ -244,6 +277,7 @@ PlasmoidItem {
             splitNetwork: Plasmoid.configuration.splitNetwork
             splitDisk: Plasmoid.configuration.splitDisk
             swarmCount: root.swarmCount
+            swarmBoost: root.swarmBoost
             fadeDurationMs: Plasmoid.configuration.fadeDurationMs
             pulseEnabled: Plasmoid.configuration.pulseEnabled
         }
@@ -260,6 +294,7 @@ PlasmoidItem {
             Layout.preferredHeight: Layout.preferredWidth
             cpuHue: root.cpuHue
             breathHalf: root.breathHalf
+            ramLevel: root.ramPct / 100
             gpuHue: root.gpuHue
             gpuActivity: root.gpuHeat
             gpuPresent: root.gpuPresent
@@ -272,6 +307,7 @@ PlasmoidItem {
             splitNetwork: Plasmoid.configuration.splitNetwork
             splitDisk: Plasmoid.configuration.splitDisk
             swarmCount: root.swarmCount
+            swarmBoost: root.swarmBoost
             fadeDurationMs: Plasmoid.configuration.fadeDurationMs
             pulseEnabled: Plasmoid.configuration.pulseEnabled
         }
@@ -305,8 +341,13 @@ PlasmoidItem {
                 displayMode: Plasmoid.configuration.statsDisplay
                 history: root.gpuHistory
                 chartColor: Qt.hsva(root.gpuHue, 0.8, 1.0, 1.0)
+                // Guard temp/mem individually: applyStats() assigns gpu_pct
+                // first, and that assignment re-evaluates this binding while
+                // temp/mem are still null (one TypeError per startup otherwise).
                 value: root.gpuPresent
-                    ? root.gpuPct.toFixed(0) + "%  ·  " + root.gpuTemp.toFixed(0) + "°C  ·  " + root.gpuMemPct.toFixed(0) + "% mem"
+                    ? root.gpuPct.toFixed(0) + "%"
+                        + ((root.gpuTemp !== null && root.gpuTemp !== undefined) ? "  ·  " + root.gpuTemp.toFixed(0) + "°C" : "")
+                        + ((root.gpuMemPct !== null && root.gpuMemPct !== undefined) ? "  ·  " + root.gpuMemPct.toFixed(0) + "% mem" : "")
                     : ""
             }
 
