@@ -40,13 +40,15 @@ popup also lists exact readings, EMA-smoothed to stop flicker. Settings
 sensor readings as numbers and/or ~60s sparklines, panel background on/off,
 and split network/disk rings.
 
-### `scripts/pulse_daemon.py`
+### `plasmoid/contents/scripts/pulse_daemon.py`
 
-Sampler daemon (`psutil`, runs as `systemd/aura-pulse.service`). Writes
-`stats.json` ~5x/sec: CPU%/temp/clock, RAM, net/disk throughput, process
-count + baseline, and GPU stats via `nvidia-smi` (~1x/sec, skipped without
-an NVIDIA GPU). The widget just cats the file instead of forking
-python+psutil per poll.
+Sampler daemon, pure Python stdlib (reads `/proc` and `/sys` directly, so
+there's nothing to install). Writes `stats.json` ~5x/sec: CPU%/temp/clock,
+RAM, net/disk throughput, process count + baseline, and GPU stats via
+`nvidia-smi` (~1x/sec, skipped without an NVIDIA GPU). The widget spawns it
+automatically when stats are missing or stale — an flock keeps it to one
+instance — so the systemd unit is optional. It ships inside the plasmoid
+package, so a store install is self-contained.
 
 ### `scripts/demo.sh`
 
@@ -72,7 +74,7 @@ message if unavailable.
 
 ## Requirements
 
-- KDE Plasma 6, `python-psutil`
+- KDE Plasma 6 (python3 comes with it)
 - `nvidia-smi` for GPU stats (optional)
 
 ## Install
@@ -83,11 +85,10 @@ message if unavailable.
 
 Symlinks the plasmoid and systemd unit into place, so repo edits take effect
 without reinstalling (plasmashell needs a restart to pick up QML changes).
-Then:
+Then add "Aura" from your panel's "Add Widgets" dialog or the system tray's
+configure button — the widget starts its own sampler. Optionally run the
+sampler as a service instead:
 
 ```
 systemctl --user enable --now aura-pulse.service
 ```
-
-and add "Aura" from your panel's "Add Widgets" dialog or the system tray's
-configure button.

@@ -3,7 +3,7 @@ Description=Aura: continuous system vitals sampler for the Aura plasmoid
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 %h/Projects/aura/scripts/pulse_daemon.py
+ExecStart=/usr/bin/python3 %h/Projects/aura/plasmoid/contents/scripts/pulse_daemon.py
 Restart=on-failure
 
 [Install]

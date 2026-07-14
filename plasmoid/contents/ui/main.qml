@@ -9,9 +9,25 @@ import org.kde.kirigami as Kirigami
 PlasmoidItem {
     id: root
 
-    // aura-pulse.service writes this ~5x/sec; catting it is much cheaper
-    // than forking python3+psutil on every poll.
+    // The daemon writes this ~5x/sec; catting it is much cheaper than
+    // forking a python sampler on every poll.
     readonly property string pulseScript: "cat $HOME/.cache/aura/stats.json"
+
+    // The sampler ships inside the plasmoid package, so a store install has
+    // it and the widget can start it on its own - no systemd setup needed.
+    readonly property string daemonScript: Qt.resolvedUrl("../scripts/pulse_daemon.py").toString().replace(/^file:\/\//, "")
+    property double lastDaemonSpawn: 0
+
+    // Fire-and-forget: the daemon's flock makes a redundant spawn exit
+    // immediately. Debounced so a crash-looping daemon isn't respawned 5x/sec.
+    function ensureDaemon() {
+        var now = Date.now()
+        if (now - lastDaemonSpawn < 10000) {
+            return
+        }
+        lastDaemonSpawn = now
+        dataSource.exec("setsid -f python3 '" + root.daemonScript + "' >/dev/null 2>&1")
+    }
 
     property var cpuPct: 0
     property var cpuTemp: null
@@ -188,10 +204,19 @@ PlasmoidItem {
         connectedSources: []
         onNewData: (sourceName, data) => {
             disconnectSource(sourceName)
+            if (sourceName !== root.pulseScript) {
+                return
+            }
             try {
-                root.applyStats(JSON.parse(data["stdout"]))
+                var s = JSON.parse(data["stdout"])
+                // Stale file = daemon died; keep showing it while restarting
+                if (s.ts !== undefined && Date.now() / 1000 - s.ts > 3) {
+                    root.ensureDaemon()
+                }
+                root.applyStats(s)
             } catch (e) {
-                console.log("aura: bad stats payload", e)
+                // No stats.json yet (fresh install) or a torn read
+                root.ensureDaemon()
             }
         }
         function exec(cmd) {
