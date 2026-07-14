@@ -118,32 +118,57 @@ stage_gpu() {
 
 # --- Network: the cyan ring ---------------------------------------------------
 stage_net() {
-    # Must be real traffic on a real interface - the daemon ignores loopback.
-    # Downloading from a speed-test server also calibrates the ring's ceiling.
-    # (OVH's proof server; Cloudflare 403s plain curl.)
-    if ! command -v curl >/dev/null || ! curl -sf --max-time 3 -o /dev/null "https://proof.ovh.net/files/1Mb.dat"; then
-        say "Network — skipped (needs curl and an internet connection; loopback traffic doesn't count as network)."
+    if ! command -v curl >/dev/null; then
+        say "Network — skipped (needs curl)."
         return
     fi
-    say "Network — watch the cyan ring: it should spin up and brighten. Downloading from a speed-test server for 6s (3 parallel streams)."
+    # Must be real traffic on a real interface - the daemon ignores loopback.
+    # The probe is a small range request so it only checks reachability; a
+    # mirror having a slow day shouldn't skip the whole stage.
+    local mirrors=(
+        "https://proof.ovh.net/files/10Gb.dat"
+        "http://ipv4.download.thinkbroadband.com/1GB.zip"
+    )
+    local url="" m
+    for m in "${mirrors[@]}"; do
+        if curl -sf --max-time 5 -r 0-65535 -o /dev/null "$m"; then
+            url="$m"
+            break
+        fi
+    done
+    if [[ -z "$url" ]]; then
+        say "Network — skipped (no speed-test mirror reachable; needs an internet connection)."
+        return
+    fi
+    local host=${url#*//}
+    host=${host%%/*}
+    say "Network — watch the cyan ring: it should spin up and brighten. Downloading from $host for 8s (3 parallel streams)."
     for ((i = 0; i < 3; i++)); do
-        curl -s --max-time 6 -o /dev/null "https://proof.ovh.net/files/10Gb.dat" &
+        curl -s --max-time 8 -o /dev/null "$url" &
         BG_PIDS+=($!)
     done
-    countdown 7
+    countdown 9
     say "Network burst done — cyan ring should be settling back down."
     sleep 2
 }
 
 # --- Disk: the amber ring ------------------------------------------------------
 stage_disk() {
-    say "Disk — watch the amber ring: it spins the OPPOSITE way from the cyan one. Hammering a scratch file with direct writes for 5s."
-    # Not /tmp - it's often tmpfs, and RAM-backed writes never hit the disk counters
-    local scratch
-    scratch=$(mktemp "$HOME/.cache/aura-demo-XXXXXX.bin")
-    SCRATCH_FILES+=("$scratch")
-    timeout 5 bash -c "while true; do dd if=/dev/zero of='$scratch' bs=1M count=200 oflag=direct status=none; done"
-    rm -f "$scratch"
+    say "Disk — watch the amber ring: it spins the OPPOSITE way from the cyan one. Hammering 3 scratch files with direct writes for 10s."
+    # urandom, not /dev/zero: btrfs setups mount with compression, and zeros
+    # compress to almost nothing before they reach the device counters.
+    # Not /tmp - it's often tmpfs, and RAM-backed writes never hit the disk.
+    local files=() f
+    for f in 1 2 3; do
+        files+=("$(mktemp "$HOME/.cache/aura-demo-XXXXXX.bin")")
+    done
+    SCRATCH_FILES+=("${files[@]}")
+    for f in "${files[@]}"; do
+        timeout 10 bash -c "while true; do dd if=/dev/urandom of='$f' bs=16M count=32 oflag=direct status=none; done" &
+        BG_PIDS+=($!)
+    done
+    countdown 11
+    rm -f "${files[@]}"
     say "Disk stress done — amber ring should be settling back down."
     sleep 2
 }
