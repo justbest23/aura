@@ -1,8 +1,7 @@
 import QtQuick
 
-// A ring of dashes that spins faster/brighter with `activity`. At zero
-// activity it still creeps around very slowly (idleDurationMs) rather than
-// sitting dead-still, so it reads as "quiet" rather than "broken".
+// A ring of dashes that spins faster/brighter with `activity`. Still creeps
+// slowly at zero so it looks quiet rather than broken.
 Item {
     id: ring
 
@@ -22,20 +21,14 @@ Item {
     height: width
     opacity: 0.1 + ring.activity * 0.75
 
-    // Spin speed interpolates geometrically, not linearly: idle-to-busy spans
-    // a ~120x speed range, and blending the duration (or speed) linearly
-    // crams every visibly-fast speed into the last few percent of activity -
-    // a ring at 0.8 would still take 12s/turn. In log space each step up in
-    // activity multiplies the speed, so the whole range reads.
+    // Geometric speed interpolation - idle-to-busy is a ~120x range, and a
+    // linear blend crams all the visibly-fast speeds into the top few percent.
     readonly property real idleDegPerMs: 360 / idleDurationMs
     readonly property real busyDegPerMs: 360 / busyDurationMs
     readonly property real degPerMs: idleDegPerMs * Math.pow(busyDegPerMs / idleDegPerMs, activity)
 
-    // Integrate the rotation per-frame instead of a looping RotationAnimation
-    // with a bound duration: a running animation loop only picks a duration
-    // change up when the loop restarts, and the idle loop is 60 SECONDS long
-    // - a traffic burst could take a minute to visibly speed the ring up
-    // (and be over before it did).
+    // Integrate per-frame: a looping RotationAnimation only picks up duration
+    // changes on loop restart, and the idle loop is 60s long.
     FrameAnimation {
         running: true
         onTriggered: {

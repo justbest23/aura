@@ -1,17 +1,7 @@
 #!/usr/bin/env python3
-"""Long-running vitals sampler.
-
-Runs continuously (see systemd/aura-pulse.service) and writes a small JSON
-state file every ~200ms. The plasmoid just `cat`s that file on a fast timer
-instead of forking `python3` + importing psutil on every poll - forking a
-fresh interpreter multiple times a second would be the wasteful way to get a
-fast update rate; sampling once in a warm long-lived process and letting the
-UI read the result is the cheap way.
-
-GPU stats come from `nvidia-smi`, which is comparatively slow to spawn, so
-it's only refreshed every GPU_EVERY ticks and the last reading is reused
-in between.
-"""
+"""Vitals sampler daemon (systemd/aura-pulse.service). Writes stats.json
+every ~200ms; the plasmoid just cats it instead of forking python+psutil
+per poll. nvidia-smi is slow to spawn, so GPU stats refresh less often."""
 import json
 import os
 import subprocess
@@ -19,28 +9,15 @@ import time
 
 import psutil
 
-INTERVAL = 0.2  # 5Hz - "multiple times per second" without hammering the GPU
-GPU_EVERY = 5  # refresh nvidia-smi every ~1s
+INTERVAL = 0.2
+GPU_EVERY = 5  # nvidia-smi every ~1s
 STATE_DIR = os.path.expanduser("~/.cache/aura")
 STATE_FILE = os.path.join(STATE_DIR, "stats.json")
 CALIBRATION_FILE = os.path.join(STATE_DIR, "calibration.json")
 
-# Ring "100%" reference for network/disk throughput, per machine: a MOVING
-# max, not a permanent ratchet. It jumps up instantly when real traffic
-# beats it (e.g. running scripts/demo.sh's network/disk stages teaches it
-# this machine's real ceiling in one pass), then decays back down with a
-# ~12h half-life toward the default floor - so one freak burst (a synthetic
-# benchmark, a one-off cache-speed copy) stops defining "100%" within a day
-# instead of permanently pinning the rings near zero for all normal traffic.
-# Persisted so it survives restarts.
-#
-# The per-metric caps are a sanity bound well above realistic home/office
-# network and consumer NVMe throughput. Loopback is excluded from the
-# network counters entirely (localhost transfers run at RAM speed and
-# aren't network activity in any sense the cyan ring cares about).
-# Floors are per medium: 100 MB/s is a fine "minimum max" for disk (slow
-# SATA territory) but absurd for network, where it would pin a modest
-# broadband line's ring near zero forever.
+# Per-machine "100%" for the rings: a moving max that jumps on new peaks and
+# decays back toward the floor with a ~12h half-life, so one freak burst
+# doesn't pin the rings near zero forever. Persisted across restarts.
 NET_FLOOR_KBPS = 12500.0  # ~100 Mbit
 DISK_FLOOR_KBPS = 100000.0  # 100 MB/s
 NET_MAX_CAP_KBPS = 1250000.0  # 10 Gbps
@@ -72,8 +49,7 @@ def load_calibration() -> dict:
 
 
 def net_totals():
-    """Total rx/tx bytes across real interfaces - loopback excluded, since
-    localhost transfers run at RAM speed and aren't network activity."""
+    """rx/tx bytes across real interfaces; loopback isn't network activity."""
     per_nic = psutil.net_io_counters(pernic=True)
     rx = sum(c.bytes_recv for name, c in per_nic.items() if name != "lo")
     tx = sum(c.bytes_sent for name, c in per_nic.items() if name != "lo")
@@ -152,12 +128,8 @@ def main() -> None:
         if tick % GPU_EVERY == 0:
             gpu_pct, gpu_temp, gpu_mem_pct = gpu_stats()
 
-        # The absolute process count barely moves in relative terms (a desktop
-        # idles at several hundred), so the widget's swarm reacts to the count
-        # relative to this baseline: it chases downward quickly (~4s) but
-        # upward only over minutes, so a burst of spawned processes stands
-        # well above it for its whole lifetime instead of dragging the
-        # reference up with it.
+        # Baseline chases the count down quickly but up only over minutes,
+        # so a burst of spawned processes stands above it for its lifetime.
         proc_count = len(psutil.pids())
         if proc_baseline is None:
             proc_baseline = float(proc_count)
@@ -174,8 +146,6 @@ def main() -> None:
             "disk_read_max_kbps": disk_r_kbps,
             "disk_write_max_kbps": disk_w_kbps,
         }
-        # Moving max: jump up instantly on a new peak, decay slowly otherwise,
-        # never below the default floor or above the sanity cap.
         new_maxes = {
             key: min(
                 CALIBRATION_CAPS[key],
@@ -183,8 +153,7 @@ def main() -> None:
             )
             for key in CALIBRATION_KEYS
         }
-        # Decay changes every tick; only persist new peaks immediately and
-        # checkpoint the decay every ~10min instead of rewriting 5x/sec.
+        # Persist peaks immediately, checkpoint decay every ~10min.
         ratcheted = any(new_maxes[key] > calibration[key] for key in CALIBRATION_KEYS)
         calibration = new_maxes
         if ratcheted or tick % CALIBRATION_SAVE_EVERY == 0:
