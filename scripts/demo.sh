@@ -123,17 +123,19 @@ stage_net() {
         return
     fi
     # Must be real traffic on a real interface - the daemon ignores loopback.
-    # The probe is a small range request so it only checks reachability; a
-    # mirror having a slow day shouldn't skip the whole stage.
+    # Race the mirrors with a 2s taste each and take the fastest - a mirror
+    # having a slow day (OVH does) would otherwise make the whole stage limp.
     local mirrors=(
         "https://proof.ovh.net/files/10Gb.dat"
         "http://ipv4.download.thinkbroadband.com/1GB.zip"
     )
-    local url="" m
+    local url="" best=0 m speed
     for m in "${mirrors[@]}"; do
-        if curl -sf --max-time 5 -r 0-65535 -o /dev/null "$m"; then
-            url="$m"
-            break
+        speed=$(curl -s --max-time 2 -o /dev/null -w '%{speed_download}' "$m")
+        speed=${speed%.*}
+        if [[ -n "$speed" && "$speed" -gt "$best" ]]; then
+            best=$speed
+            url=$m
         fi
     done
     if [[ -z "$url" ]]; then
