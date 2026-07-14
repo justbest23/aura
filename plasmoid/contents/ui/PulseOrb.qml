@@ -94,12 +94,19 @@ Item {
         }
     }
 
-    // Process swarm - drifting motes
+    // Process swarm - drifting motes. Under a surge the group spin stays
+    // lazy but every mote picks up its own speed, direction and radial
+    // wobble, so a burst reads as chaos rather than a faster carousel.
     Item {
         id: swarm
         anchors.centerIn: parent
         width: orb.width
         height: width
+        property real phase: 0
+        FrameAnimation {
+            running: true
+            onTriggered: swarm.phase += frameTime * (0.05 + 1.2 * orb.swarmBoost)
+        }
         RotationAnimation on rotation {
             running: true
             loops: Animation.Infinite
@@ -112,8 +119,10 @@ Item {
         Repeater {
             model: 48
             delegate: Rectangle {
-                readonly property real angle: orb.prand(index) * 2 * Math.PI
+                readonly property real drift: (orb.prand(index + 400) - 0.5) * 2
+                readonly property real angle: orb.prand(index) * 2 * Math.PI + swarm.phase * drift
                 readonly property real orbitR: swarm.width / 2 * (0.95 + orb.prand(index + 50) * 0.28)
+                    * (1 + Math.sin(swarm.phase * (2 + 3 * orb.prand(index + 500)) + orb.prand(index + 600) * 6.28) * 0.2 * orb.swarmBoost)
                 readonly property real twinklePhase: orb.prand(index + 200) * Math.PI * 2
                 width: swarm.width * (0.018 + orb.prand(index + 100) * 0.02) * (1.0 + 0.35 * orb.swarmBoost)
                 height: width
